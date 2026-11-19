@@ -4,6 +4,7 @@ import {
   create as createWAClient,
   ev,
 } from "@open-wa/wa-automate";
+import { rmSync } from "fs";
 import http from "http";
 import decryptViewOncePhoto from "./helpers/decryptViewOncePhoto";
 import isCommand from "./utils/isCommand";
@@ -13,14 +14,12 @@ import { commands } from "./utils/userCommands";
 let latestQrDataUrl: string | null = null;
 let isConnected = false;
 
-// Sikiliza QR code kutoka @open-wa/wa-automate ili ionekane kwenye kivinjari
 ev.on("qr.**", (qrcode: string) => {
   latestQrDataUrl = qrcode;
   isConnected = false;
   logWithColor.green("QR Code mpya iko tayari kwenye kivinjari!");
 });
 
-// Web Server ndogo ili Render isiizime bot na uweze kuscan QR Code
 const PORT = Number(process.env.PORT) || 3000;
 http
   .createServer((req, res) => {
@@ -39,7 +38,7 @@ http
         </html>
       `);
     } else {
-      res.end("<h2>Inawasha Chrome / WhatsApp Session... Subiri sekunde 20 kisha refresh.</h2>");
+      res.end("<h2>Inawasha Chrome / WhatsApp Session... Subiri sekunde 30 kisha refresh.</h2>");
     }
   })
   .listen(PORT, () => {
@@ -55,14 +54,12 @@ const bootstrap = (client: Client) => {
     if (!message.body) return;
     const bodyTrimmed = message.body.trim().toLowerCase();
 
-    // Amri za kufungua View Once (.vv, .vvo, #dvo)
     if ([".vv", ".vvo", "#dvo", ".dvo"].includes(bodyTrimmed)) {
       logWithColor.green(`Executing View Once command: ${bodyTrimmed}`);
       await decryptViewOncePhoto(client, message, true);
       return;
     }
 
-    // Amri za asili za bot (!...)
     if (message.fromMe) {
       const splitMessage = message.body.split(" ");
       const commandName = splitMessage[0];
@@ -78,6 +75,10 @@ const bootstrap = (client: Client) => {
 };
 
 const start = () => {
+  try {
+    rmSync("./_IGNORE_session", { recursive: true, force: true });
+  } catch {}
+
   createWAClient({
     useChrome: true,
     executablePath: process.env.CHROME_PATH || "/usr/bin/chromium",
@@ -88,13 +89,9 @@ const start = () => {
     bypassCSP: true,
     disableSpins: true,
     killProcessOnBrowserClose: true,
-    chromiumArgs: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--no-first-run",
-    ],
+    puppeteerOptions: {
+      protocolTimeout: 120000,
+    },
   })
     .then((client) => bootstrap(client))
     .catch((err) => {
