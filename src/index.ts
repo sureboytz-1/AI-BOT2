@@ -3,6 +3,7 @@ import makeWASocket, {
   downloadContentFromMessage,
   fetchLatestBaileysVersion,
   MediaType,
+  proto,
   useMultiFileAuthState,
 } from "@whiskeysockets/baileys";
 import http from "http";
@@ -10,6 +11,9 @@ import pino from "pino";
 
 let pairingCode: string | null = null;
 let isConnected = false;
+
+// Hifadhi ya ujumbe halisi unaoingia (muhimu sana kwa View Once)
+const messageStore = new Map<string, proto.IWebMessageInfo>();
 
 const PORT = Number(process.env.PORT) || 3000;
 http
@@ -78,6 +82,12 @@ async function startBot() {
     auth: state,
     browser: ["Ubuntu", "Chrome", "20.0.04"],
     syncFullHistory: false,
+    getMessage: async (key) => {
+      if (key.id && messageStore.has(key.id)) {
+        return messageStore.get(key.id)!.message || undefined;
+      }
+      return undefined;
+    },
   });
 
   sock.ev.on("creds.update", saveCreds);
@@ -116,6 +126,15 @@ async function startBot() {
     for (const rawMsg of messages) {
       if (!rawMsg?.message) continue;
 
+      // Hifadhi ujumbe kwenye store ili tukireply .vv tupate mediaKey halisi
+      if (rawMsg.key.id) {
+        messageStore.set(rawMsg.key.id, rawMsg);
+        if (messageStore.size > 500) {
+          const firstKey = messageStore.keys().next().value;
+          if (firstKey) messageStore.delete(firstKey);
+        }
+      }
+
       const msgContent = unwrapMessage(rawMsg.message);
       const text =
         msgContent?.conversation ||
@@ -125,16 +144,17 @@ async function startBot() {
 
       if ([".vv", ".vvo", "#dvo", ".dvo"].includes(cmd)) {
         try {
-          console.log("Amri ya View Once imepokelewa:", cmd);
           const contextInfo = msgContent?.extendedTextMessage?.contextInfo;
-          const quotedRaw = contextInfo?.quotedMessage;
+          const stanzaId = contextInfo?.stanzaId;
+          const storedMsg = stanzaId ? messageStore.get(stanzaId) : undefined;
+          const sourceMsg = storedMsg?.message || contextInfo?.quotedMessage;
 
-          if (!quotedRaw) {
+          if (!sourceMsg) {
             console.log("Hakuna ujumbe ulio-repliwa.");
             continue;
           }
 
-          const innerMsg = unwrapMessage(quotedRaw);
+          const innerMsg = unwrapMessage(sourceMsg);
           let mediaType: MediaType | null = null;
           let mediaObj: any = null;
 
@@ -149,8 +169,8 @@ async function startBot() {
             mediaObj = innerMsg.audioMessage;
           }
 
-          if (!mediaType || !mediaObj) {
-            console.log("Ujumbe ulio-repliwa hauna media:", Object.keys(innerMsg || {}));
+          if (!mediaType || !mediaObj || !mediaObj.mediaKey) {
+            console.log("Media hii haina mediaKey (huenda ilitumwa kabla bot haijawaka au ilishafunguliwa).");
             continue;
           }
 
@@ -178,7 +198,12 @@ async function startBot() {
             });
           }
 
-          console.log("View Once imefunguliwa na kutumwa kikamilifu!");
+          // Weka react ya tick kwenye amri yako ili ujue imefanikiwa
+          await sock.sendMessage(rawMsg.key.remoteJid!, {
+            react: { text: "✅", key: rawMsg.key },
+          });
+
+          console.log("View Once imefunguliwa na kutumwa kwenye Message Yourself!");
         } catch (err) {
           console.error("Hitilafu wakati wa kufungua View Once:", err);
         }
