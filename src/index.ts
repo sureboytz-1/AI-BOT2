@@ -11,13 +11,14 @@ import isCommand from "./utils/isCommand";
 import { logWithColor } from "./utils/logger";
 import { commands } from "./utils/userCommands";
 
-let latestQrDataUrl: string | null = null;
+let pairingCode: string | null = null;
 let isConnected = false;
 
-ev.on("qr.**", (qrcode: string) => {
-  latestQrDataUrl = qrcode;
+// Sikiliza Pairing Code kutoka @open-wa/wa-automate
+ev.on("pairingCode.**", (code: string) => {
+  pairingCode = code;
   isConnected = false;
-  logWithColor.green("QR Code mpya iko tayari kwenye kivinjari!");
+  logWithColor.green(`PAIRING CODE YAKO NI: ${code}`);
 });
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -26,14 +27,16 @@ http
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     if (isConnected) {
       res.end("<h2>SUREBOY WhatsApp Bot Imeunganishwa na Iko Hewani!</h2>");
-    } else if (latestQrDataUrl) {
+    } else if (pairingCode) {
       res.end(`
         <html>
-          <head><meta http-equiv="refresh" content="8"></head>
-          <body style="font-family:sans-serif;text-align:center;padding:30px;">
-            <h2>Scan QR Code Hii Kwenye WhatsApp Yako</h2>
-            <img src="${latestQrDataUrl}" style="width:300px;height:300px;" />
-            <p>Ukurasa unajirefresh kila sekunde 8...</p>
+          <head><meta http-equiv="refresh" content="15"></head>
+          <body style="font-family:sans-serif;text-align:center;padding:40px;">
+            <h2>Ingiza Pairing Code Hii Kwenye WhatsApp Yako</h2>
+            <div style="font-size:36px;font-weight:bold;letter-spacing:6px;background:#f0f0f0;padding:20px;border-radius:10px;display:inline-block;margin:20px 0;">
+              ${pairingCode}
+            </div>
+            <p>Nenda WhatsApp &gt; Linked Devices &gt; Link a Device &gt; <b>Link with phone number instead</b></p>
           </body>
         </html>
       `);
@@ -41,9 +44,9 @@ http
       res.end(`
         <html>
           <head><meta http-equiv="refresh" content="5"></head>
-          <body style="font-family:sans-serif;text-align:center;padding:30px;">
-            <h2>Inawasha Chrome / WhatsApp Session...</h2>
-            <p>Ukurasa utajirefresh wenyewe kila sekunde 5 hadi QR Code itokee...</p>
+          <body style="font-family:sans-serif;text-align:center;padding:40px;">
+            <h2>Inaandaa Pairing Code...</h2>
+            <p>Subiri sekunde chache, ukurasa unajirefresh wenyewe...</p>
           </body>
         </html>
       `);
@@ -55,7 +58,7 @@ http
 
 const bootstrap = (client: Client) => {
   isConnected = true;
-  latestQrDataUrl = null;
+  pairingCode = null;
   logWithColor.green("WhatsApp Bot imeunganishwa kikamilifu!");
 
   client.onAnyMessage(async (message: Message) => {
@@ -87,15 +90,17 @@ const start = () => {
     rmSync("./_IGNORE_session", { recursive: true, force: true });
   } catch {}
 
+  const phoneNumber = (process.env.PHONE_NUMBER || "").replace(/[^0-9]/g, "");
+
   createWAClient({
     useChrome: true,
     executablePath: process.env.CHROME_PATH || "/usr/bin/chromium",
     headless: true,
+    usePairingCode: Boolean(phoneNumber),
+    pairingCodePhoneNumber: phoneNumber || undefined,
     qrTimeout: 0,
     authTimeout: 0,
     timeout: 0,
-    autoRefresh: true,
-    qrRefreshS: 20,
     cacheEnabled: false,
     bypassCSP: true,
     disableSpins: true,
