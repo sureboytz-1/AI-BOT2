@@ -1,7 +1,8 @@
 import makeWASocket, {
   DisconnectReason,
-  downloadMediaMessage,
+  downloadContentFromMessage,
   fetchLatestBaileysVersion,
+  MediaType,
   useMultiFileAuthState,
 } from "@whiskeysockets/baileys";
 import http from "http";
@@ -48,6 +49,24 @@ http
   })
   .listen(PORT, () => console.log(`Web server listening on port ${PORT}`));
 
+function unwrapMessage(m: any): any {
+  if (!m) return null;
+  if (m.ephemeralMessage?.message) return unwrapMessage(m.ephemeralMessage.message);
+  if (m.viewOnceMessage?.message) return unwrapMessage(m.viewOnceMessage.message);
+  if (m.viewOnceMessageV2?.message) return unwrapMessage(m.viewOnceMessageV2.message);
+  if (m.viewOnceMessageV2Extension?.message) return unwrapMessage(m.viewOnceMessageV2Extension.message);
+  if (m.documentWithCaptionMessage?.message) return unwrapMessage(m.documentWithCaptionMessage.message);
+  return m;
+}
+
+async function streamToBuffer(stream: AsyncIterable<Buffer>): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) {
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState("./auth_session");
   const { version } = await fetchLatestBaileysVersion();
@@ -58,6 +77,7 @@ async function startBot() {
     printQRInTerminal: false,
     auth: state,
     browser: ["Ubuntu", "Chrome", "20.0.04"],
+    syncFullHistory: false,
   });
 
   sock.ev.on("creds.update", saveCreds);
@@ -93,81 +113,72 @@ async function startBot() {
   });
 
   sock.ev.on("messages.upsert", async ({ messages }) => {
-    for (const msg of messages) {
-      if (!msg?.message) continue;
+    for (const rawMsg of messages) {
+      if (!rawMsg?.message) continue;
 
+      const msgContent = unwrapMessage(rawMsg.message);
       const text =
-        msg.message.conversation ||
-        msg.message.extendedTextMessage?.text ||
+        msgContent?.conversation ||
+        msgContent?.extendedTextMessage?.text ||
         "";
       const cmd = text.trim().toLowerCase();
 
       if ([".vv", ".vvo", "#dvo", ".dvo"].includes(cmd)) {
         try {
           console.log("Amri ya View Once imepokelewa:", cmd);
-          const quoted =
-            msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
+          const contextInfo = msgContent?.extendedTextMessage?.contextInfo;
+          const quotedRaw = contextInfo?.quotedMessage;
 
-          if (!quoted) {
-            console.log("Hakuna ujumbe ulio-repliwa (quoted).");
+          if (!quotedRaw) {
+            console.log("Hakuna ujumbe ulio-repliwa.");
             continue;
           }
 
-          // Tafuta ujumbe wa View Once kwenye miundo yote ya WhatsApp
-          const innerMsg =
-            quoted.viewOnceMessageV2?.message ||
-            quoted.viewOnceMessageV2Extension?.message ||
-            quoted.viewOnceMessage?.message ||
-            quoted;
+          const innerMsg = unwrapMessage(quotedRaw);
+          let mediaType: MediaType | null = null;
+          let mediaObj: any = null;
 
-          const mediaType = innerMsg.imageMessage
-            ? "image"
-            : innerMsg.videoMessage
-            ? "video"
-            : innerMsg.audioMessage
-            ? "audio"
-            : null;
+          if (innerMsg?.imageMessage) {
+            mediaType = "image";
+            mediaObj = innerMsg.imageMessage;
+          } else if (innerMsg?.videoMessage) {
+            mediaType = "video";
+            mediaObj = innerMsg.videoMessage;
+          } else if (innerMsg?.audioMessage) {
+            mediaType = "audio";
+            mediaObj = innerMsg.audioMessage;
+          }
 
-          if (!mediaType) {
-            console.log("Ujumbe ulio-repliwa hauna picha/video/audio:", Object.keys(innerMsg));
+          if (!mediaType || !mediaObj) {
+            console.log("Ujumbe ulio-repliwa hauna media:", Object.keys(innerMsg || {}));
             continue;
           }
 
-          // Ondoa flag ya viewOnce ili Baileys ipakuwe media vizuri
-          const cleanMedia: any = { ...innerMsg };
-          if (cleanMedia.imageMessage) cleanMedia.imageMessage = { ...cleanMedia.imageMessage, viewOnce: false };
-          if (cleanMedia.videoMessage) cleanMedia.videoMessage = { ...cleanMedia.videoMessage, viewOnce: false };
-          if (cleanMedia.audioMessage) cleanMedia.audioMessage = { ...cleanMedia.audioMessage, viewOnce: false };
+          const stream = await downloadContentFromMessage(mediaObj, mediaType);
+          const buffer = await streamToBuffer(stream);
 
-          const buffer = await downloadMediaMessage(
-            { key: msg.key, message: cleanMedia } as any,
-            "buffer",
-            {},
-            { logger: pino({ level: "silent" }), reuploadRequest: sock.updateMediaMessage }
-          );
-
-          const chatJid = msg.key.remoteJid!;
+          const myJid = sock.user?.id?.split(":")[0] + "@s.whatsapp.net";
+          const targetJid = myJid || rawMsg.key.remoteJid!;
 
           if (mediaType === "image") {
-            await sock.sendMessage(
-              chatJid,
-              { image: buffer as Buffer, caption: "View Once Imefunguliwa" },
-              { quoted: msg }
-            );
+            await sock.sendMessage(targetJid, {
+              image: buffer,
+              caption: "View Once Imefunguliwa (SUREBOY Bot)",
+            });
           } else if (mediaType === "video") {
-            await sock.sendMessage(
-              chatJid,
-              { video: buffer as Buffer, caption: "View Once Imefunguliwa" },
-              { quoted: msg }
-            );
+            await sock.sendMessage(targetJid, {
+              video: buffer,
+              caption: "View Once Imefunguliwa (SUREBOY Bot)",
+            });
           } else if (mediaType === "audio") {
-            await sock.sendMessage(
-              chatJid,
-              { audio: buffer as Buffer, mimetype: "audio/mp4", ptt: true },
-              { quoted: msg }
-            );
+            await sock.sendMessage(targetJid, {
+              audio: buffer,
+              mimetype: "audio/mp4",
+              ptt: true,
+            });
           }
-          console.log("View Once imetumwa kikamilifu!");
+
+          console.log("View Once imefunguliwa na kutumwa kikamilifu!");
         } catch (err) {
           console.error("Hitilafu wakati wa kufungua View Once:", err);
         }
