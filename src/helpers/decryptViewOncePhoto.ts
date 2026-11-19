@@ -1,69 +1,69 @@
 import { Client, Message, decryptMedia } from "@open-wa/wa-automate";
-import { writeFile } from "fs";
+import { existsSync, mkdirSync, writeFileSync } from "fs";
 import mime from "mime-types";
 import path from "path";
 import { logWithColor } from "../utils/logger";
 import { sendImageMessage } from "../utils/sender";
 
-/**
- * Stores an image in the dist directory of this.
- * @param {string} filename The desired name of the stored image.
- * @param {string} image The desired image.
- */
 const storeImageInDist = (filename: string, image: Buffer) => {
   const ROOTDIR = path.join(__dirname, "../..");
-  const FILEPATH = path.join(ROOTDIR, "dist/view-once-images", filename);
+  const DIRPATH = path.join(ROOTDIR, "dist/view-once-images");
 
-  // Store the decrypted image in the desired file path
-  writeFile(FILEPATH, image, (err) => {
-    if (err) return logWithColor.red(err.message);
+  if (!existsSync(DIRPATH)) {
+    mkdirSync(DIRPATH, { recursive: true });
+  }
 
-    logWithColor.green(`Successfully stored the image at ${FILEPATH}`);
-  });
+  const FILEPATH = path.join(DIRPATH, filename);
+  writeFileSync(FILEPATH, image);
+  logWithColor.green(`Successfully stored the image at ${FILEPATH}`);
 
   return FILEPATH;
 };
 
-/**
- * Decrypts a quoted message containing media and returns the base64 of the image.
- * Also saves the decrypted media as a file. Sends the image back to the sender (optional).
- * @param {Client} client The message received from sender.
- * @param {Message} message The message received from sender.
- * @param {boolean?} sendBack The message received from sender.
- */
 const decryptViewOncePhoto = async (
   client: Client,
   message: Message,
   sendBack?: boolean
 ) => {
-  // Get the replied message
   const quotedMessage = message.quotedMsg;
-
-  // Check if the replied message is an image
   const mimeType = quotedMessage?.mimetype;
-  if (mimeType) {
-    const filename = `${Date.now()}_from_${
-      quotedMessage.sender.name
-    }.${mime.extension(mimeType)}`;
 
-    try {
-      // Decrypt the encrypted view once image
-      const decryptedImage = await decryptMedia(quotedMessage);
-      const base64 = `data:${mimeType};base64.${decryptedImage.toString(
-        "base64"
-      )}`;
+  if (!quotedMessage || !mimeType) {
+    await client.reply(
+      message.chatId,
+      "_Tafadhali reply ujumbe wa picha/video ya View Once._",
+      message.id
+    );
+    return;
+  }
 
-      // Store the image
-      const FILEPATH = storeImageInDist(filename, decryptedImage);
+  const senderName = (
+    quotedMessage.sender?.pushname ||
+    quotedMessage.sender?.name ||
+    "user"
+  ).replace(/[^a-zA-Z0-9_-]/g, "_");
 
-      // Sends the image back to the sender
-      if (sendBack)
-        await sendImageMessage(client, message.chatId, FILEPATH, filename);
+  const ext = mime.extension(mimeType) || "jpg";
+  const filename = `${Date.now()}_from_${senderName}.${ext}`;
 
-      return base64;
-    } catch (error) {
-      logWithColor.red(error as string);
+  try {
+    const decryptedImage = await decryptMedia(quotedMessage);
+    const base64 = `data:${mimeType};base64,${decryptedImage.toString("base64")}`;
+
+    const FILEPATH = storeImageInDist(filename, decryptedImage);
+
+    if (sendBack) {
+      await sendImageMessage(client, message.chatId, FILEPATH, filename);
     }
+
+    return base64;
+  } catch (error: any) {
+    logWithColor.red(error?.message || String(error));
+    await client.reply(
+      message.chatId,
+      `_Imeshindwa kufungua View Once: ${error?.message || "Hitilafu ya decryption"}_`,
+      message.id
+    );
   }
 };
 
