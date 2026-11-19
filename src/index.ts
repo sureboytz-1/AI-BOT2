@@ -14,28 +14,55 @@ import { commands } from "./utils/userCommands";
 let pairingCode: string | null = null;
 let isConnected = false;
 
-// Sikiliza Pairing Code kutoka @open-wa/wa-automate
-ev.on("pairingCode.**", (code: string) => {
-  pairingCode = code;
+const setCode = (code: any) => {
+  if (!code) return;
+  const clean = typeof code === "string" ? code : JSON.stringify(code);
+  pairingCode = clean;
   isConnected = false;
-  logWithColor.green(`PAIRING CODE YAKO NI: ${code}`);
-});
+  logWithColor.green(`>>> PAIRING CODE YAKO NI: ${clean} <<<`);
+};
+
+// Sikiliza matukio yote yanayoweza kubeba Pairing Code kwenye @open-wa/wa-automate
+ev.on("code.**", setCode);
+ev.on("pairingCode.**", setCode);
+ev.on("pairing-code.**", setCode);
+
+// Kamata pia code ikichapishwa moja kwa moja kwenye stdout/console (mfano ABCD-1234)
+const origWrite = process.stdout.write.bind(process.stdout);
+(process.stdout as any).write = (chunk: any, ...args: any[]) => {
+  const str = String(chunk);
+  const match = str.match(/\b([A-Z0-9]{4}-[A-Z0-9]{4})\b/);
+  if (match && !isConnected) {
+    pairingCode = match[1];
+  }
+  return origWrite(chunk, ...args);
+};
 
 const PORT = Number(process.env.PORT) || 3000;
 http
   .createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    const phoneEnv = (process.env.PHONE_NUMBER || "").replace(/[^0-9]/g, "");
+
     if (isConnected) {
       res.end("<h2>SUREBOY WhatsApp Bot Imeunganishwa na Iko Hewani!</h2>");
+    } else if (!phoneEnv) {
+      res.end(`
+        <body style="font-family:sans-serif;text-align:center;padding:40px;color:#b00;">
+          <h2>Bado Hujaweka PHONE_NUMBER Kwenye Render!</h2>
+          <p>Nenda Render &gt; AI-BOT2 &gt; Environment &gt; Ongeza <b>PHONE_NUMBER</b> (mfano: <code>255712345678</code>)</p>
+        </body>
+      `);
     } else if (pairingCode) {
       res.end(`
         <html>
           <head><meta http-equiv="refresh" content="15"></head>
           <body style="font-family:sans-serif;text-align:center;padding:40px;">
             <h2>Ingiza Pairing Code Hii Kwenye WhatsApp Yako</h2>
-            <div style="font-size:36px;font-weight:bold;letter-spacing:6px;background:#f0f0f0;padding:20px;border-radius:10px;display:inline-block;margin:20px 0;">
+            <div style="font-size:38px;font-weight:bold;letter-spacing:6px;background:#f0f0f0;padding:20px 30px;border-radius:10px;display:inline-block;margin:20px 0;">
               ${pairingCode}
             </div>
+            <p>Namba iliyotumika: <b>+${phoneEnv}</b></p>
             <p>Nenda WhatsApp &gt; Linked Devices &gt; Link a Device &gt; <b>Link with phone number instead</b></p>
           </body>
         </html>
@@ -43,10 +70,10 @@ http
     } else {
       res.end(`
         <html>
-          <head><meta http-equiv="refresh" content="5"></head>
+          <head><meta http-equiv="refresh" content="4"></head>
           <body style="font-family:sans-serif;text-align:center;padding:40px;">
-            <h2>Inaandaa Pairing Code...</h2>
-            <p>Subiri sekunde chache, ukurasa unajirefresh wenyewe...</p>
+            <h2>Inaomba Pairing Code kwa namba +${phoneEnv}...</h2>
+            <p>Subiri sekunde 15–25 baada ya "Page loaded", ukurasa unajirefresh wenyewe...</p>
           </body>
         </html>
       `);
