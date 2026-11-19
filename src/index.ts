@@ -29,16 +29,24 @@ http
     } else if (latestQrDataUrl) {
       res.end(`
         <html>
-          <head><meta http-equiv="refresh" content="10"></head>
+          <head><meta http-equiv="refresh" content="8"></head>
           <body style="font-family:sans-serif;text-align:center;padding:30px;">
             <h2>Scan QR Code Hii Kwenye WhatsApp Yako</h2>
             <img src="${latestQrDataUrl}" style="width:300px;height:300px;" />
-            <p>Ukurasa unajirefresh kila sekunde 10...</p>
+            <p>Ukurasa unajirefresh kila sekunde 8...</p>
           </body>
         </html>
       `);
     } else {
-      res.end("<h2>Inawasha Chrome / WhatsApp Session... Subiri sekunde 30 kisha refresh.</h2>");
+      res.end(`
+        <html>
+          <head><meta http-equiv="refresh" content="5"></head>
+          <body style="font-family:sans-serif;text-align:center;padding:30px;">
+            <h2>Inawasha Chrome / WhatsApp Session...</h2>
+            <p>Ukurasa utajirefresh wenyewe kila sekunde 5 hadi QR Code itokee...</p>
+          </body>
+        </html>
+      `);
     }
   })
   .listen(PORT, () => {
@@ -86,6 +94,9 @@ const start = () => {
     qrTimeout: 0,
     authTimeout: 0,
     timeout: 0,
+    autoRefresh: true,
+    qrRefreshS: 20,
+    cacheEnabled: false,
     bypassCSP: true,
     disableSpins: true,
     killProcessOnBrowserClose: true,
