@@ -39,7 +39,7 @@ http
         </html>
       `);
     } else {
-      res.end("<h2>Inawasha Chrome / WhatsApp Session... Subiri sekunde 15 kisha refresh.</h2>");
+      res.end("<h2>Inawasha Chrome / WhatsApp Session... Subiri sekunde 20 kisha refresh.</h2>");
     }
   })
   .listen(PORT, () => {
@@ -84,20 +84,23 @@ const start = () => {
     headless: true,
     qrTimeout: 0,
     authTimeout: 0,
+    timeout: 0,
+    bypassCSP: true,
+    disableSpins: true,
     killProcessOnBrowserClose: true,
     chromiumArgs: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
-      "--disable-accelerated-2d-canvas",
-      "--no-first-run",
-      "--no-zygote",
-      "--single-process",
       "--disable-gpu",
+      "--no-first-run",
     ],
   })
     .then((client) => bootstrap(client))
-    .catch((err) => logWithColor.red(String(err)));
+    .catch((err) => {
+      logWithColor.red(String(err));
+      setTimeout(start, 5000);
+    });
 };
 
 start();
