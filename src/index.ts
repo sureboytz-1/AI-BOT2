@@ -93,51 +93,84 @@ async function startBot() {
   });
 
   sock.ev.on("messages.upsert", async ({ messages }) => {
-    const msg = messages[0];
-    if (!msg?.message) return;
+    for (const msg of messages) {
+      if (!msg?.message) continue;
 
-    const text =
-      msg.message.conversation ||
-      msg.message.extendedTextMessage?.text ||
-      "";
-    const cmd = text.trim().toLowerCase();
+      const text =
+        msg.message.conversation ||
+        msg.message.extendedTextMessage?.text ||
+        "";
+      const cmd = text.trim().toLowerCase();
 
-    if ([".vv", ".vvo", "#dvo", ".dvo"].includes(cmd)) {
-      const quoted =
-        msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
-      const viewOnce =
-        quoted?.viewOnceMessageV2?.message ||
-        quoted?.viewOnceMessage?.message ||
-        quoted?.viewOnceMessageV2Extension?.message;
+      if ([".vv", ".vvo", "#dvo", ".dvo"].includes(cmd)) {
+        try {
+          console.log("Amri ya View Once imepokelewa:", cmd);
+          const quoted =
+            msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
 
-      if (!viewOnce) return;
+          if (!quoted) {
+            console.log("Hakuna ujumbe ulio-repliwa (quoted).");
+            continue;
+          }
 
-      const mediaType = viewOnce.imageMessage
-        ? "image"
-        : viewOnce.videoMessage
-        ? "video"
-        : null;
-      if (!mediaType) return;
+          // Tafuta ujumbe wa View Once kwenye miundo yote ya WhatsApp
+          const innerMsg =
+            quoted.viewOnceMessageV2?.message ||
+            quoted.viewOnceMessageV2Extension?.message ||
+            quoted.viewOnceMessage?.message ||
+            quoted;
 
-      const buffer = await downloadMediaMessage(
-        { message: viewOnce } as any,
-        "buffer",
-        {}
-      );
-      const chatJid = msg.key.remoteJid!;
+          const mediaType = innerMsg.imageMessage
+            ? "image"
+            : innerMsg.videoMessage
+            ? "video"
+            : innerMsg.audioMessage
+            ? "audio"
+            : null;
 
-      if (mediaType === "image") {
-        await sock.sendMessage(
-          chatJid,
-          { image: buffer as Buffer, caption: "View Once Imefunguliwa" },
-          { quoted: msg }
-        );
-      } else {
-        await sock.sendMessage(
-          chatJid,
-          { video: buffer as Buffer, caption: "View Once Imefunguliwa" },
-          { quoted: msg }
-        );
+          if (!mediaType) {
+            console.log("Ujumbe ulio-repliwa hauna picha/video/audio:", Object.keys(innerMsg));
+            continue;
+          }
+
+          // Ondoa flag ya viewOnce ili Baileys ipakuwe media vizuri
+          const cleanMedia: any = { ...innerMsg };
+          if (cleanMedia.imageMessage) cleanMedia.imageMessage = { ...cleanMedia.imageMessage, viewOnce: false };
+          if (cleanMedia.videoMessage) cleanMedia.videoMessage = { ...cleanMedia.videoMessage, viewOnce: false };
+          if (cleanMedia.audioMessage) cleanMedia.audioMessage = { ...cleanMedia.audioMessage, viewOnce: false };
+
+          const buffer = await downloadMediaMessage(
+            { key: msg.key, message: cleanMedia } as any,
+            "buffer",
+            {},
+            { logger: pino({ level: "silent" }), reuploadRequest: sock.updateMediaMessage }
+          );
+
+          const chatJid = msg.key.remoteJid!;
+
+          if (mediaType === "image") {
+            await sock.sendMessage(
+              chatJid,
+              { image: buffer as Buffer, caption: "View Once Imefunguliwa" },
+              { quoted: msg }
+            );
+          } else if (mediaType === "video") {
+            await sock.sendMessage(
+              chatJid,
+              { video: buffer as Buffer, caption: "View Once Imefunguliwa" },
+              { quoted: msg }
+            );
+          } else if (mediaType === "audio") {
+            await sock.sendMessage(
+              chatJid,
+              { audio: buffer as Buffer, mimetype: "audio/mp4", ptt: true },
+              { quoted: msg }
+            );
+          }
+          console.log("View Once imetumwa kikamilifu!");
+        } catch (err) {
+          console.error("Hitilafu wakati wa kufungua View Once:", err);
+        }
       }
     }
   });
