@@ -1,42 +1,14 @@
-import {
-  Client,
-  Message,
-  create as createWAClient,
-  ev,
-} from "@open-wa/wa-automate";
-import { rmSync } from "fs";
+import makeWASocket, {
+  DisconnectReason,
+  downloadMediaMessage,
+  fetchLatestBaileysVersion,
+  useMultiFileAuthState,
+} from "@whiskeysockets/baileys";
 import http from "http";
-import decryptViewOncePhoto from "./helpers/decryptViewOncePhoto";
-import isCommand from "./utils/isCommand";
-import { logWithColor } from "./utils/logger";
-import { commands } from "./utils/userCommands";
+import pino from "pino";
 
 let pairingCode: string | null = null;
 let isConnected = false;
-
-const setCode = (code: any) => {
-  if (!code) return;
-  const clean = typeof code === "string" ? code : JSON.stringify(code);
-  pairingCode = clean;
-  isConnected = false;
-  logWithColor.green(`>>> PAIRING CODE YAKO NI: ${clean} <<<`);
-};
-
-// Sikiliza matukio yote yanayoweza kubeba Pairing Code kwenye @open-wa/wa-automate
-ev.on("code.**", setCode);
-ev.on("pairingCode.**", setCode);
-ev.on("pairing-code.**", setCode);
-
-// Kamata pia code ikichapishwa moja kwa moja kwenye stdout/console (mfano ABCD-1234)
-const origWrite = process.stdout.write.bind(process.stdout);
-(process.stdout as any).write = (chunk: any, ...args: any[]) => {
-  const str = String(chunk);
-  const match = str.match(/\b([A-Z0-9]{4}-[A-Z0-9]{4})\b/);
-  if (match && !isConnected) {
-    pairingCode = match[1];
-  }
-  return origWrite(chunk, ...args);
-};
 
 const PORT = Number(process.env.PORT) || 3000;
 http
@@ -47,12 +19,7 @@ http
     if (isConnected) {
       res.end("<h2>SUREBOY WhatsApp Bot Imeunganishwa na Iko Hewani!</h2>");
     } else if (!phoneEnv) {
-      res.end(`
-        <body style="font-family:sans-serif;text-align:center;padding:40px;color:#b00;">
-          <h2>Bado Hujaweka PHONE_NUMBER Kwenye Render!</h2>
-          <p>Nenda Render &gt; AI-BOT2 &gt; Environment &gt; Ongeza <b>PHONE_NUMBER</b> (mfano: <code>255712345678</code>)</p>
-        </body>
-      `);
+      res.end("<h2>Weka PHONE_NUMBER (mfano: 255712345678) kwenye Render Environment!</h2>");
     } else if (pairingCode) {
       res.end(`
         <html>
@@ -62,85 +29,118 @@ http
             <div style="font-size:38px;font-weight:bold;letter-spacing:6px;background:#f0f0f0;padding:20px 30px;border-radius:10px;display:inline-block;margin:20px 0;">
               ${pairingCode}
             </div>
-            <p>Namba iliyotumika: <b>+${phoneEnv}</b></p>
-            <p>Nenda WhatsApp &gt; Linked Devices &gt; Link a Device &gt; <b>Link with phone number instead</b></p>
+            <p>Namba: <b>+${phoneEnv}</b></p>
+            <p>WhatsApp &gt; Linked Devices &gt; Link a Device &gt; <b>Link with phone number instead</b></p>
           </body>
         </html>
       `);
     } else {
       res.end(`
         <html>
-          <head><meta http-equiv="refresh" content="4"></head>
+          <head><meta http-equiv="refresh" content="3"></head>
           <body style="font-family:sans-serif;text-align:center;padding:40px;">
-            <h2>Inaomba Pairing Code kwa namba +${phoneEnv}...</h2>
-            <p>Subiri sekunde 15–25 baada ya "Page loaded", ukurasa unajirefresh wenyewe...</p>
+            <h2>Inaandaa Pairing Code...</h2>
+            <p>Subiri sekunde 5...</p>
           </body>
         </html>
       `);
     }
   })
-  .listen(PORT, () => {
-    logWithColor.green(`Web server listening on port ${PORT}`);
+  .listen(PORT, () => console.log(`Web server listening on port ${PORT}`));
+
+async function startBot() {
+  const { state, saveCreds } = await useMultiFileAuthState("./auth_session");
+  const { version } = await fetchLatestBaileysVersion();
+
+  const sock = makeWASocket({
+    version,
+    logger: pino({ level: "silent" }),
+    printQRInTerminal: false,
+    auth: state,
+    browser: ["Ubuntu", "Chrome", "20.0.04"],
   });
 
-const bootstrap = (client: Client) => {
-  isConnected = true;
-  pairingCode = null;
-  logWithColor.green("WhatsApp Bot imeunganishwa kikamilifu!");
+  sock.ev.on("creds.update", saveCreds);
 
-  client.onAnyMessage(async (message: Message) => {
-    if (!message.body) return;
-    const bodyTrimmed = message.body.trim().toLowerCase();
-
-    if ([".vv", ".vvo", "#dvo", ".dvo"].includes(bodyTrimmed)) {
-      logWithColor.green(`Executing View Once command: ${bodyTrimmed}`);
-      await decryptViewOncePhoto(client, message, true);
-      return;
+  if (!sock.authState.creds.registered) {
+    const phoneNumber = (process.env.PHONE_NUMBER || "").replace(/[^0-9]/g, "");
+    if (phoneNumber) {
+      setTimeout(async () => {
+        try {
+          const code = await sock.requestPairingCode(phoneNumber);
+          pairingCode = code?.match(/.{1,4}/g)?.join("-") || code;
+          console.log(`>>> PAIRING CODE YAKO NI: ${pairingCode} <<<`);
+        } catch (err) {
+          console.error("Pairing code error:", err);
+        }
+      }, 3000);
     }
+  }
 
-    if (message.fromMe) {
-      const splitMessage = message.body.split(" ");
-      const commandName = splitMessage[0];
-      if (isCommand(commandName)) {
-        logWithColor.green(`Executing command ${commandName}`);
-        commands[commandName as keyof typeof commands].function(
-          client,
-          message
+  sock.ev.on("connection.update", (update) => {
+    const { connection, lastDisconnect } = update;
+    if (connection === "open") {
+      isConnected = true;
+      pairingCode = null;
+      console.log("WhatsApp Bot imeunganishwa kikamilifu!");
+    } else if (connection === "close") {
+      isConnected = false;
+      const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
+      if (statusCode !== DisconnectReason.loggedOut) {
+        setTimeout(startBot, 3000);
+      }
+    }
+  });
+
+  sock.ev.on("messages.upsert", async ({ messages }) => {
+    const msg = messages[0];
+    if (!msg?.message) return;
+
+    const text =
+      msg.message.conversation ||
+      msg.message.extendedTextMessage?.text ||
+      "";
+    const cmd = text.trim().toLowerCase();
+
+    if ([".vv", ".vvo", "#dvo", ".dvo"].includes(cmd)) {
+      const quoted =
+        msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
+      const viewOnce =
+        quoted?.viewOnceMessageV2?.message ||
+        quoted?.viewOnceMessage?.message ||
+        quoted?.viewOnceMessageV2Extension?.message;
+
+      if (!viewOnce) return;
+
+      const mediaType = viewOnce.imageMessage
+        ? "image"
+        : viewOnce.videoMessage
+        ? "video"
+        : null;
+      if (!mediaType) return;
+
+      const buffer = await downloadMediaMessage(
+        { message: viewOnce } as any,
+        "buffer",
+        {}
+      );
+      const chatJid = msg.key.remoteJid!;
+
+      if (mediaType === "image") {
+        await sock.sendMessage(
+          chatJid,
+          { image: buffer as Buffer, caption: "View Once Imefunguliwa" },
+          { quoted: msg }
+        );
+      } else {
+        await sock.sendMessage(
+          chatJid,
+          { video: buffer as Buffer, caption: "View Once Imefunguliwa" },
+          { quoted: msg }
         );
       }
     }
   });
-};
+}
 
-const start = () => {
-  try {
-    rmSync("./_IGNORE_session", { recursive: true, force: true });
-  } catch {}
-
-  const phoneNumber = (process.env.PHONE_NUMBER || "").replace(/[^0-9]/g, "");
-
-  createWAClient({
-    useChrome: true,
-    executablePath: process.env.CHROME_PATH || "/usr/bin/chromium",
-    headless: true,
-    usePairingCode: Boolean(phoneNumber),
-    pairingCodePhoneNumber: phoneNumber || undefined,
-    qrTimeout: 0,
-    authTimeout: 0,
-    timeout: 0,
-    cacheEnabled: false,
-    bypassCSP: true,
-    disableSpins: true,
-    killProcessOnBrowserClose: true,
-    puppeteerOptions: {
-      protocolTimeout: 120000,
-    },
-  })
-    .then((client) => bootstrap(client))
-    .catch((err) => {
-      logWithColor.red(String(err));
-      setTimeout(start, 5000);
-    });
-};
-
-start();
+startBot();
